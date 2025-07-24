@@ -1,0 +1,68 @@
+name: Android Nyxstone Build
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  NDK_VERSION: r25c
+  NDK_HOME: ${{ github.workspace }}/ndk/android-ndk-${{ env.NDK_VERSION }}
+  ANDROID_PLATFORM: android-21
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install host LLVM 16
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-16 llvm-16-dev
+
+      - name: Download and cache Android NDK
+        uses: actions/cache@v4
+        id: cache-ndk
+        with:
+          path: ndk/
+          key: ndk-${{ env.NDK_VERSION }}-${{ runner.os }}
+      - name: Download NDK if not cached
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ndk
+          wget https://dl.google.com/android/repository/android-ndk-${{ env.NDK_VERSION }}-linux.zip
+          unzip -q android-ndk-${{ env.NDK_VERSION }}-linux.zip -d ndk/
+
+      - name: Build for each ABI
+        run: |
+          for ABI in armeabi-v7a arm64-v8a; do
+            BUILD_DIR=build-$ABI
+            mkdir -p $BUILD_DIR
+            cd $BUILD_DIR
+            cmake \
+              -DCMAKE_TOOLCHAIN_FILE=$NDK_HOME/build/cmake/android.toolchain.cmake \
+              -DANDROID_ABI=$ABI \
+              -DANDROID_PLATFORM=$ANDROID_PLATFORM \
+              -DLLVM_ROOT=/usr/lib/llvm-16 \
+              -DBUILD_SHARED_LIBS=ON \
+              -DNYXSTONE_BUILD_EXAMPLES=OFF \
+              ..
+            make -j$(nproc)
+            cd ..
+          done
+
+      - name: Collect shared libraries
+        run: |
+          mkdir -p libs
+          for ABI in armeabi-v7a arm64-v8a; do
+            cp build-$ABI/libnyxstone.so libs/$ABI/
+          done
+
+      - name: Upload .so artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-libs
+          path: libs/
